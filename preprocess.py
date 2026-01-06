@@ -118,8 +118,19 @@ def detect_keypoints(image_file: os.path):
     """ YOUR CODE HERE:
     Detect keypoints using cv2.SIFT_create() and sift.detectAndCompute
     """
+    # 读取图像
+    image = cv2.imread(image_file)
+    # 转换为灰度图
+    if len(image.shape) == 3:
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    else:
+        gray = image
     
-
+    # 创建 SIFT 检测器
+    sift = cv2.SIFT_create()
+    
+    # 检测关键点和计算描述符
+    keypoints, descriptors = sift.detectAndCompute(gray, None)
 
     """ END YOUR CODE HERE. """
 
@@ -167,8 +178,20 @@ def create_feature_matches(image_file1: os.path, image_file2: os.path, lowe_rati
     1. Run cv.BFMatcher() and matcher.knnMatch(descriptors1, descriptors2, 2)
     2. Filter the feature matches using the Lowe ratio test.
     """
+    # 创建 BFMatcher
+    bf = cv2.BFMatcher()
     
-
+    # KNN 匹配，k=2
+    if descriptors1 is not None and descriptors2 is not None:
+        raw_matches = bf.knnMatch(descriptors1, descriptors2, k=2)
+        
+        # 应用 Lowe's Ratio Test
+        for m, n in raw_matches:
+            if m.distance < lowe_ratio * n.distance:
+                # 注意：后续代码需要 good_matches 是一个列表，里面包含 match 对象
+                # 且通过 good_matches = [match[0] for match in good_matches] 处理
+                # 所以这里 append 一个包含 m 的列表
+                good_matches.append([m])
 
     """ END YOUR CODE HERE. """
     if len(good_matches) < min_matches:
@@ -242,9 +265,19 @@ def create_ransac_matches(image_file1: os.path, image_file2: os.path,
     Perform goemetric verification by finding the essential matrix between keypoints in the first image and keypoints in
     the second image using cv2.findEssentialMatrix(..., method=cv2.RANSAC, threshold=ransac_threshold, ...)
     """
+    # 使用 RANSAC 计算本质矩阵
+    # findEssentialMatrix 需要 float 类型的点，points1 和 points2 已经是 ndarray
+    essential_mtx, mask = cv2.findEssentialMat(
+        points1, 
+        points2, 
+        camera_intrinsics, 
+        method=cv2.RANSAC, 
+        prob=0.999, 
+        threshold=ransac_threshold
+    )
     
-
-
+    is_inlier = mask
+    
     """ END YOUR CODE HERE """
 
     is_inlier = is_inlier.ravel().tolist()
@@ -278,7 +311,20 @@ def create_scene_graph(image_files: list, min_num_inliers: int = 40):
     Add edges to <graph> if the minimum number of geometrically verified inliers between images is at least  
     <min_num_inliers> 
     """
-    
+    for i in range(len(image_files)):
+        for j in range(i + 1, len(image_files)):
+            id1 = image_ids[i]
+            id2 = image_ids[j]
+            match_id = '{}_{}'.format(id1, id2)
+            
+            # 检查 RANSAC 匹配文件是否存在
+            ransac_match_file = os.path.join(RANSAC_MATCH_DIR, match_id + '.npy')
+            
+            if os.path.exists(ransac_match_file):
+                inliers = np.load(ransac_match_file)
+                # 如果内点数量满足要求，添加边
+                if inliers.shape[0] >= min_num_inliers:
+                    graph.add_edge(i, j)
 
     
     """ END YOUR CODE HERE """

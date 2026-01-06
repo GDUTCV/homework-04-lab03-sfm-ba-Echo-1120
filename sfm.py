@@ -26,8 +26,25 @@ def get_init_image_ids(scene_graph: dict) -> (str, str):
     """
     max_pair = [None, None]  # dummy value
     """ YOUR CODE HERE """
-    
+    max_inliers = -1
+    processed_pairs = set()
 
+    # 遍历场景图中的每一对图像
+    for image_id1, neighbors in scene_graph.items():
+        for image_id2 in neighbors:
+            # 确保不重复计算 (id1, id2) 和 (id2, id1)
+            pair = tuple(sorted((image_id1, image_id2)))
+            if pair in processed_pairs:
+                continue
+            processed_pairs.add(pair)
+
+            # 加载匹配并检查内点数量
+            matches = load_matches(image_id1, image_id2)
+            num_inliers = matches.shape[0]
+
+            if num_inliers > max_inliers:
+                max_inliers = num_inliers
+                max_pair = list(pair)
 
     """ END YOUR CODE HERE """
     image_id1, image_id2 = sorted(max_pair)
@@ -78,8 +95,11 @@ def get_init_extrinsics(image_id1: str, image_id2: str, intrinsics: np.ndarray) 
 
     extrinsics2 = np.zeros(shape=[3, 4], dtype=float)
     """ YOUR CODE HERE """
+    # 使用 recoverPose 从本质矩阵中恢复旋转 R 和平移 t
+    _, R, t, _ = cv2.recoverPose(essential_mtx, points2d_1, points2d_2, intrinsics)
     
-
+    extrinsics2[:3, :3] = R
+    extrinsics2[:3, 3] = t.reshape(-1)
 
     """ END YOUR CODE HERE """
     return extrinsics1, extrinsics2
@@ -154,8 +174,15 @@ def get_reprojection_residuals(points2d: np.ndarray, points3d: np.ndarray, intri
     """
     residuals = np.zeros(points2d.shape[0])
     """ YOUR CODE HERE """
-   
-
+    # 转换旋转矩阵为旋转向量
+    rvec, _ = cv2.Rodrigues(rotation_mtx)
+    
+    # 投影 3D 点到 2D 图像平面
+    projected_points, _ = cv2.projectPoints(points3d, rvec, tvec, intrinsics, distCoeffs=None)
+    projected_points = projected_points.reshape(-1, 2)
+    
+    # 计算欧氏距离
+    residuals = np.linalg.norm(points2d - projected_points, axis=1)
 
     """ END YOUR CODE HERE """
     return residuals
@@ -202,8 +229,18 @@ def solve_pnp(image_id: str, point2d_idxs: np.ndarray, all_points3d: np.ndarray,
         2. convert the returned rotation vector to rotation matrix using cv2.Rodrigues
         3. compute the reprojection residuals
         """
-       
-
+        # 1. 求解 PnP
+        success, rvec, tvec = cv2.solvePnP(selected_pts3d, selected_pts2d, intrinsics, distCoeffs=None, flags=cv2.SOLVEPNP_ITERATIVE)
+        
+        if success:
+            # 2. 转换旋转向量为矩阵
+            rotation_mtx, _ = cv2.Rodrigues(rvec)
+            
+            # 3. 计算所有点的重投影误差 (注意：是针对所有点，不是选中的6个点)
+            residuals = get_reprojection_residuals(points2d, points3d, intrinsics, rotation_mtx, tvec)
+        else:
+            # 如果求解失败，跳过本次迭代
+            residuals = np.full(points2d.shape[0], np.inf)
 
         """ END YOUR CODE HERE """
 
@@ -254,8 +291,15 @@ def add_points3d(image_id1: str, image_id2: str, all_extrinsic: dict, intrinsics
     triangulate between the image points for the unregistered matches for image_id1 and image_id2 to get new points3d
     new_points3d = triangulate(..., kp_idxs1=matches[:, 0], kp_idxs2=matches[:, 1], ...)
     """
-    
-
+    new_points3d = triangulate(
+        image_id1=image_id1, 
+        image_id2=image_id2, 
+        kp_idxs1=matches[:, 0], 
+        kp_idxs2=matches[:, 1], 
+        extrinsics1=all_extrinsic[image_id1], 
+        extrinsics2=all_extrinsic[image_id2], 
+        intrinsics=intrinsics
+    )
 
     """ END YOUR CODE HERE """
 
@@ -286,8 +330,23 @@ def get_next_pair(scene_graph: dict, registered_ids: list):
     max_new_id, max_registered_id, max_num_inliers = None, None, 0
     """ YOUR CODE HERE """
     
-
-
+    # 遍历所有已注册的图像
+    for reg_id in registered_ids:
+        # 获取该图像的邻居
+        neighbors = scene_graph[reg_id]
+        
+        # 遍历邻居，找到未注册的图像
+        for neighbor_id in neighbors:
+            if neighbor_id not in registered_ids:
+                # 检查这一对的内点数量
+                matches = load_matches(reg_id, neighbor_id)
+                num_inliers = matches.shape[0]
+                
+                # 如果内点更多，更新最佳选择
+                if num_inliers > max_num_inliers:
+                    max_num_inliers = num_inliers
+                    max_new_id = neighbor_id
+                    max_registered_id = reg_id
     
     """ END YOUR CODE HERE """
     return max_new_id, max_registered_id
@@ -452,4 +511,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-

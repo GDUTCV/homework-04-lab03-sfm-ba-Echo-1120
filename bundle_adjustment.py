@@ -44,8 +44,34 @@ def compute_ba_residuals(parameters: np.ndarray, intrinsics: np.ndarray, num_cam
     NOTE: DO NOT USE LOOPS 
     HINT: I used np.matmul; np.sum; np.sqrt; np.square, np.concatenate etc.
     """
-    
+    # 1. 获取每个观测点对应的相机外参矩阵
+    # camera_idxs 形状: (N,), extrinsics 形状: (C, 3, 4) -> 结果形状: (N, 3, 4)
+    current_extrinsics = extrinsics[camera_idxs]
 
+    # 2. 获取每个观测点对应的 3D 坐标
+    # points3d_idxs 形状: (N,), points3d 形状: (M, 3) -> 结果形状: (N, 3)
+    current_points3d = points3d[points3d_idxs]
+
+    # 3. 将 3D 点转换为齐次坐标 (X, Y, Z, 1)
+    # 形状: (N, 4)
+    points3d_hom = np.concatenate([current_points3d, np.ones((current_points3d.shape[0], 1))], axis=1)
+
+    # 4. 将点从世界坐标系变换到相机坐标系: P_cam = [R|t] * P_world
+    # 批量矩阵乘法: (N, 3, 4) @ (N, 4, 1) -> (N, 3, 1)
+    points_cam = np.matmul(current_extrinsics, points3d_hom.reshape(-1, 4, 1))
+
+    # 5. 将点投影到图像平面 (像素坐标系): P_img = K * P_cam
+    # 批量矩阵乘法: (3, 3) @ (N, 3, 1) -> (N, 3, 1) (NumPy 会自动广播 intrinsics)
+    points_proj_hom = np.matmul(intrinsics, points_cam)
+    points_proj_hom = points_proj_hom.reshape(-1, 3)
+
+    # 6. 透视除法 (归一化): u = x/z, v = y/z
+    # 形状: (N, 2)
+    points_proj_2d = points_proj_hom[:, :2] / points_proj_hom[:, 2:]
+
+    # 7. 计算残差 (欧氏距离)
+    diff = points2d - points_proj_2d
+    residuals = np.sqrt(np.sum(np.square(diff), axis=1))
     
     """ END YOUR CODE HERE """
     return residuals
